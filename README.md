@@ -1,4 +1,4 @@
-# Google Analytics MCP Server
+# Google Analytics MCP Server (OAuth2 User Authorization)
 
 A Model Context Protocol (MCP) server that provides seamless access to Google Analytics 4 data through standard MCP interfaces. This tool allows LLM applications to easily query and analyze Google Analytics data without directly dealing with the complexities of the Google Analytics Data API.
 
