@@ -1,6 +1,6 @@
 {
   "name": "mcp-google-analytics-oauth2",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "MCP server for Google Analytics Data API using OAuth2 authentication",
   "main": "src/index.js",
   "bin": {
