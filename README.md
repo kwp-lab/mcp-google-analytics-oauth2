@@ -1,15 +1,15 @@
-# Google Analytics MCP Server (OAuth2 User Authorization)
+# Google Analytics MCP Server
 
 A Model Context Protocol (MCP) server that provides seamless access to Google Analytics 4 data through standard MCP interfaces. This tool allows LLM applications to easily query and analyze Google Analytics data without directly dealing with the complexities of the Google Analytics Data API.
 
 ## ✨ Features
 
-- **🔐 OAuth2 User Authorization**: Access GA data using user's OAuth2 tokens (not just service accounts)
+- **🔐 Dual Authentication**: Support both Service Account and OAuth2 User Authorization
 - **Real-time Data Access**: Get real-time analytics data for current active users and activity
 - **Custom Reports**: Create comprehensive reports with custom dimensions and metrics
 - **Quick Insights**: Predefined analytics insights for common use cases
 - **Metadata Discovery**: Get available dimensions and metrics for your Google Analytics property
-- **🔄 Auto Token Refresh**: Automatically refreshes expired access tokens and saves them
+- **🔄 Auto Token Refresh**: Automatically refreshes expired OAuth2 access tokens
 - **Smart Error Handling**: Detailed error messages with actionable solutions for permission issues
 - **Standard MCP Interface**: Works with any MCP-compatible client
 
@@ -23,13 +23,70 @@ npm install @toolsdk.ai/google-analytics-mcp
 
 - Node.js >= 18.0.0
 - Google Analytics 4 property
-- OAuth2 tokens from a Google Cloud OAuth2 authorization flow
+- Either:
+  - **Service Account** credentials (default), OR
+  - **OAuth2 tokens** from a user authorization flow
 
-## Setup
+## 🔐 Authentication Modes
 
-### OAuth2 Authorization (User Consent Flow)
+This MCP server supports two authentication modes, controlled by the `GOOGLE_AUTH_MODE` environment variable:
 
-This MCP server uses **OAuth2 User Authorization** to access Google Analytics data on behalf of the user. This means:
+| Mode | Value | Description |
+|------|-------|-------------|
+| **Service Account** | `service_account` (default) | Use a GCP service account JSON key |
+| **OAuth2** | `oauth2` | Use user-authorized OAuth2 tokens |
+
+---
+
+## Mode 1: Service Account (Default)
+
+Use this mode for server-to-server authentication without user interaction.
+
+### Setup Steps
+
+1. **Create a Service Account** in Google Cloud Console
+2. **Download the JSON key** file
+3. **Grant access** to your GA4 property:
+   - Go to Google Analytics → Admin → Property Access Management
+   - Add the service account email (e.g., `xxx@project.iam.gserviceaccount.com`) with **Viewer** access
+
+### Environment Variables
+
+```env
+# Optional: defaults to 'service_account'
+GOOGLE_AUTH_MODE=service_account
+
+# Option 1: Direct JSON string
+GOOGLE_CREDENTIALS='{"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}'
+
+# Option 2: Path to JSON file
+GOOGLE_CREDENTIALS_PATH=/path/to/service-account.json
+```
+
+### Claude Desktop Configuration
+
+```json
+{
+  "mcpServers": {
+    "google-analytics-mcp": {
+      "command": "npx",
+      "args": ["-y", "@toolsdk.ai/google-analytics-mcp"],
+      "env": {
+        "GOOGLE_AUTH_MODE": "service_account",
+        "GOOGLE_CREDENTIALS_PATH": "/path/to/service-account.json"
+      }
+    }
+  }
+}
+```
+
+---
+
+## Mode 2: OAuth2 User Authorization
+
+Use this mode to access GA data on behalf of a user with their own permissions.
+
+### Advantages
 
 - ✅ Access the user's own GA properties without service account setup
 - ✅ No need to add service accounts to GA property permissions
@@ -43,7 +100,6 @@ You need to implement the OAuth2 authorization flow using libraries like:
 
 - [`googleapis`](https://www.npmjs.com/package/googleapis) (Node.js)
 - [`google-auth-library`](https://www.npmjs.com/package/google-auth-library) (Node.js)
-- Or any OAuth2 library for your platform
 
 Required OAuth2 scopes:
 ```
@@ -75,7 +131,7 @@ fs.writeFileSync('tokens.json', JSON.stringify(tokens, null, 2));
 
 ### 2. tokens.json Format
 
-After completing the OAuth2 flow, save the tokens in a `tokens.json` file with this format:
+After completing the OAuth2 flow, save the tokens in a `tokens.json` file:
 
 ```json
 {
@@ -104,11 +160,11 @@ The MCP server searches for `tokens.json` in the following order:
 3. `{current working directory}/../tokens.json`
 4. `{src directory}/../../tokens.json`
 
-### 4. Environment Configuration (Optional)
-
-For automatic token refresh, you can optionally provide your OAuth2 client credentials:
+### 4. Environment Variables (OAuth2 Mode)
 
 ```env
+GOOGLE_AUTH_MODE=oauth2
+
 # Optional: Path to tokens.json (if not in default location)
 GOOGLE_OAUTH2_TOKEN_PATH=/path/to/your/tokens.json
 
@@ -117,7 +173,28 @@ GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret
 ```
 
-## ⚠️ Token Lifecycle Management
+### Claude Desktop Configuration (OAuth2)
+
+```json
+{
+  "mcpServers": {
+    "google-analytics-mcp": {
+      "command": "npx",
+      "args": ["-y", "@toolsdk.ai/google-analytics-mcp"],
+      "env": {
+        "GOOGLE_AUTH_MODE": "oauth2",
+        "GOOGLE_OAUTH2_TOKEN_PATH": "/path/to/your/tokens.json",
+        "GOOGLE_CLIENT_ID": "your-client-id (optional)",
+        "GOOGLE_CLIENT_SECRET": "your-client-secret (optional)"
+      }
+    }
+  }
+}
+```
+
+---
+
+## ⚠️ Token Lifecycle Management (OAuth2 Mode)
 
 ### Access Token Expiration
 
@@ -152,38 +229,7 @@ When configured with `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, the server w
    - Implement re-authorization flow for when refresh tokens become invalid
    - Monitor for `invalid_grant` errors which indicate the refresh token is no longer valid
 
-### Handling Token Errors
-
-If you encounter authentication errors:
-
-1. Check if `tokens.json` exists and contains valid tokens
-2. Verify the `access_token` hasn't expired (check `expiry_date`)
-3. If refresh fails, re-run your OAuth2 authorization flow to get new tokens
-4. Ensure the authorized user has access to the GA4 property
-
-## Usage
-
-### Use with Claude Desktop
-
-```json
-{
-  "mcpServers": {
-    "google-analytics-mcp": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@toolsdk.ai/google-analytics-mcp"
-      ],
-      "env": {
-        "GOOGLE_OAUTH2_TOKEN_PATH": "/path/to/your/tokens.json",
-        "GOOGLE_CLIENT_ID": "your-client-id (optional, for token refresh)",
-        "GOOGLE_CLIENT_SECRET": "your-client-secret (optional, for token refresh)"
-      }
-    }
-  }
-}
-```
-
+---
 
 ## Available Tools
 
@@ -238,11 +284,25 @@ Parameters:
 
 ## Error Handling
 
-The server provides detailed error messages with actionable solutions:
+The server provides detailed error messages with actionable solutions based on the authentication mode:
 
-- **Permission Errors**: Clear instructions when the OAuth2 user doesn't have access to the GA property
-- **Authentication Errors**: Guidance on token issues and re-authorization
-- **API Errors**: Detailed information about what went wrong with the Google Analytics API
+**Service Account Mode:**
+- Permission errors will prompt you to add the service account email to GA property access
+
+**OAuth2 Mode:**
+- Permission errors will suggest re-authorization
+- Token errors will indicate refresh or re-authorization needs
+
+## Environment Variables Summary
+
+| Variable | Mode | Description |
+|----------|------|-------------|
+| `GOOGLE_AUTH_MODE` | Both | `service_account` (default) or `oauth2` |
+| `GOOGLE_CREDENTIALS` | Service Account | JSON string of service account key |
+| `GOOGLE_CREDENTIALS_PATH` | Service Account | Path to service account JSON file |
+| `GOOGLE_OAUTH2_TOKEN_PATH` | OAuth2 | Path to tokens.json |
+| `GOOGLE_CLIENT_ID` | OAuth2 | Client ID for token refresh |
+| `GOOGLE_CLIENT_SECRET` | OAuth2 | Client secret for token refresh |
 
 ## Contributing
 

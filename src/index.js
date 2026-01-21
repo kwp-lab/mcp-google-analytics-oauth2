@@ -15,6 +15,39 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Authentication mode: 'service_account' (default) or 'oauth2'
+const authMode = (process.env.GOOGLE_AUTH_MODE || 'service_account').toLowerCase();
+
+// Helper function to load Service Account credentials
+function loadCredentials() {
+  // 1. Try direct JSON string first
+  if (process.env.GOOGLE_CREDENTIALS) {
+    try {
+      return JSON.parse(process.env.GOOGLE_CREDENTIALS);
+    } catch (error) {
+      console.error('Warning: Failed to parse GOOGLE_CREDENTIALS environment variable');
+    }
+  }
+
+  // 2. Try file path
+  if (process.env.GOOGLE_CREDENTIALS_PATH) {
+    try {
+      const credentialsPath = path.resolve(process.cwd(), process.env.GOOGLE_CREDENTIALS_PATH);
+      
+      if (fs.existsSync(credentialsPath)) {
+        const fileContent = fs.readFileSync(credentialsPath, 'utf8');
+        return JSON.parse(fileContent);
+      } else {
+        console.error(`Warning: Credentials file not found at: ${credentialsPath}`);
+      }
+    } catch (error) {
+      console.error('Warning: Failed to read credentials file:', error.message);
+    }
+  }
+
+  return {};
+}
+
 // Helper function to load OAuth2 tokens from tokens.json
 function loadTokens() {
   // Try multiple paths to find tokens.json
@@ -36,37 +69,66 @@ function loadTokens() {
   throw new Error(`Tokens file not found. Searched paths: ${possiblePaths.join(', ')}`);
 }
 
-// Create OAuth2Client and set credentials
-const { tokens, path: tokensPath } = loadTokens();
-const oauth2Client = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET
-);
+// Initialize authentication based on mode
+let analyticsDataClient;
+let authDescription;
 
-oauth2Client.setCredentials({
-  access_token: tokens.access_token,
-  refresh_token: tokens.refresh_token,
-  expiry_date: tokens.expiry_date,
-  token_type: tokens.token_type,
-  scope: tokens.scope
-});
+if (authMode === 'oauth2') {
+  // OAuth2 mode: Use user authorization tokens
+  console.error('Using OAuth2 authentication mode');
+  
+  const { tokens, path: tokensPath } = loadTokens();
+  const oauth2Client = new OAuth2Client(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET
+  );
 
-// Auto-refresh tokens and save to file
-oauth2Client.on('tokens', (newTokens) => {
-  console.error('Tokens refreshed, saving to file...');
-  const updatedTokens = {
-    ...tokens,
-    ...newTokens,
-    expiry_date: newTokens.expiry_date || Date.now() + (newTokens.expires_in || 3600) * 1000
+  oauth2Client.setCredentials({
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token,
+    expiry_date: tokens.expiry_date,
+    token_type: tokens.token_type,
+    scope: tokens.scope
+  });
+
+  // Auto-refresh tokens and save to file
+  oauth2Client.on('tokens', (newTokens) => {
+    console.error('Tokens refreshed, saving to file...');
+    const updatedTokens = {
+      ...tokens,
+      ...newTokens,
+      expiry_date: newTokens.expiry_date || Date.now() + (newTokens.expires_in || 3600) * 1000
+    };
+    fs.writeFileSync(tokensPath, JSON.stringify(updatedTokens, null, 2));
+    console.error('Tokens saved successfully.');
+  });
+
+  analyticsDataClient = new BetaAnalyticsDataClient({
+    authClient: oauth2Client
+  });
+  
+  authDescription = { mode: 'oauth2', identity: 'OAuth2 authorized user' };
+
+} else {
+  // Service Account mode (default)
+  console.error('Using Service Account authentication mode');
+  
+  const credentials = loadCredentials();
+  
+  if (!credentials.client_email) {
+    console.error('Warning: No valid service account credentials found. Please set GOOGLE_CREDENTIALS or GOOGLE_CREDENTIALS_PATH');
+  }
+
+  analyticsDataClient = new BetaAnalyticsDataClient({
+    projectId: credentials.project_id,
+    credentials: credentials
+  });
+  
+  authDescription = { 
+    mode: 'service_account', 
+    identity: credentials.client_email || 'unknown service account'
   };
-  fs.writeFileSync(tokensPath, JSON.stringify(updatedTokens, null, 2));
-  console.error('Tokens saved successfully.');
-});
-
-// Create BetaAnalyticsDataClient with OAuth2Client
-const analyticsDataClient = new BetaAnalyticsDataClient({
-  authClient: oauth2Client
-});
+}
 
 const server = new McpServer({
   name: 'google-analytics-mcp',
@@ -80,33 +142,58 @@ async function executeWithErrorHandling(fn, propertyId) {
   } catch (error) {
     // Handle permission errors specifically
     if (error.code === 7 || error.message?.includes('permission')) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            error: 'Permission denied for this Google Analytics property',
-            propertyId: propertyId,
-            solution: 'The OAuth2 user does not have access to this property',
-            steps: [
-              '1. Ensure the authorized user has access to this GA4 property',
-              '2. Check if the property ID is correct',
-              '3. Re-authorize if needed to get fresh tokens'
-            ],
-            originalError: error.message
-          }, null, 2)
-        }]
-      };
+      if (authDescription.mode === 'oauth2') {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: 'Permission denied for this Google Analytics property',
+              propertyId: propertyId,
+              authMode: 'oauth2',
+              solution: 'The OAuth2 user does not have access to this property',
+              steps: [
+                '1. Ensure the authorized user has access to this GA4 property',
+                '2. Check if the property ID is correct',
+                '3. Re-authorize if needed to get fresh tokens'
+              ],
+              originalError: error.message
+            }, null, 2)
+          }]
+        };
+      } else {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: 'Permission denied for this Google Analytics property',
+              propertyId: propertyId,
+              authMode: 'service_account',
+              solution: `Please grant access to the service account: ${authDescription.identity}`,
+              steps: [
+                '1. Go to Google Analytics (analytics.google.com)',
+                '2. Navigate to Admin > Property Access Management',
+                `3. Add ${authDescription.identity} with Viewer access`,
+                '4. Try the query again'
+              ],
+              originalError: error.message
+            }, null, 2)
+          }]
+        };
+      }
     }
 
-    // Handle token errors
-    if (error.message?.includes('token') || error.message?.includes('auth')) {
+    // Handle token errors (mainly for OAuth2 mode)
+    if (error.message?.includes('token') || error.message?.includes('auth') || error.message?.includes('invalid_grant')) {
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
             error: 'Authentication error',
             message: error.message,
-            solution: 'Token may be expired or invalid. Please re-authorize to get fresh tokens.',
+            authMode: authDescription.mode,
+            solution: authDescription.mode === 'oauth2' 
+              ? 'Token may be expired or invalid. Please re-authorize to get fresh tokens.'
+              : 'Service account credentials may be invalid. Please check your GOOGLE_CREDENTIALS configuration.',
             propertyId: propertyId
           }, null, 2)
         }]
