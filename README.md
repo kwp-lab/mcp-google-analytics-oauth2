@@ -151,21 +151,25 @@ After completing the OAuth2 flow, save the tokens in a `tokens.json` file:
 | `token_type` | Token type (usually "Bearer") | Optional |
 | `expiry_date` | Token expiration timestamp (ms) | ⚠️ Recommended |
 
-### 3. tokens.json File Location
+### 3. Token Loading Priority
 
-The MCP server searches for `tokens.json` in the following order:
+The MCP server loads OAuth2 tokens in the following order:
 
-1. Path specified by `GOOGLE_OAUTH2_TOKEN_PATH` environment variable
-2. `{current working directory}/tokens.json`
-3. `{current working directory}/../tokens.json`
-4. `{src directory}/../../tokens.json`
+1. **Direct JSON string** via `GOOGLE_OAUTH2_TOKENS` environment variable
+2. Path specified by `GOOGLE_OAUTH2_TOKEN_PATH` environment variable
+3. `{current working directory}/tokens.json`
+4. `{current working directory}/../tokens.json`
+5. `{src directory}/../../tokens.json`
 
 ### 4. Environment Variables (OAuth2 Mode)
 
 ```env
 GOOGLE_AUTH_MODE=oauth2
 
-# Optional: Path to tokens.json (if not in default location)
+# Option 1: Direct JSON string
+GOOGLE_OAUTH2_TOKENS='{"access_token":"ya29...","refresh_token":"1//0e...","expiry_date":1234567890000}'
+
+# Option 2: Path to tokens.json
 GOOGLE_OAUTH2_TOKEN_PATH=/path/to/your/tokens.json
 
 # Optional: For automatic token refresh
@@ -300,6 +304,7 @@ The server provides detailed error messages with actionable solutions based on t
 | `GOOGLE_AUTH_MODE` | Both | `service_account` (default) or `oauth2` |
 | `GOOGLE_CREDENTIALS` | Service Account | JSON string of service account key |
 | `GOOGLE_CREDENTIALS_PATH` | Service Account | Path to service account JSON file |
+| `GOOGLE_OAUTH2_TOKENS` | OAuth2 | JSON string of OAuth2 tokens |
 | `GOOGLE_OAUTH2_TOKEN_PATH` | OAuth2 | Path to tokens.json |
 | `GOOGLE_CLIENT_ID` | OAuth2 | Client ID for token refresh |
 | `GOOGLE_CLIENT_SECRET` | OAuth2 | Client secret for token refresh |

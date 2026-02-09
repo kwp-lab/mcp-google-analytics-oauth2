@@ -48,9 +48,20 @@ function loadCredentials() {
   return {};
 }
 
-// Helper function to load OAuth2 tokens from tokens.json
+// Helper function to load OAuth2 tokens from tokens.json or environment variable
 function loadTokens() {
-  // Try multiple paths to find tokens.json
+  // 1. Try direct JSON string first (GOOGLE_OAUTH2_TOKENS)
+  if (process.env.GOOGLE_OAUTH2_TOKENS) {
+    try {
+      console.error('Loading tokens from GOOGLE_OAUTH2_TOKENS environment variable');
+      const tokens = JSON.parse(process.env.GOOGLE_OAUTH2_TOKENS);
+      return { tokens, path: null }; // path is null when using env var
+    } catch (error) {
+      console.error('Warning: Failed to parse GOOGLE_OAUTH2_TOKENS environment variable:', error.message);
+    }
+  }
+
+  // 2. Try multiple paths to find tokens.json
   const possiblePaths = [
     process.env.GOOGLE_OAUTH2_TOKEN_PATH,
     path.resolve(process.cwd(), 'tokens.json'),
@@ -66,7 +77,7 @@ function loadTokens() {
     }
   }
 
-  throw new Error(`Tokens file not found. Searched paths: ${possiblePaths.join(', ')}`);
+  throw new Error(`Tokens not found. Set GOOGLE_OAUTH2_TOKENS env var or provide tokens.json. Searched paths: ${possiblePaths.join(', ')}`);
 }
 
 // Initialize authentication based on mode
@@ -91,16 +102,24 @@ if (authMode === 'oauth2') {
     scope: tokens.scope
   });
 
-  // Auto-refresh tokens and save to file
+  // Auto-refresh tokens and save to file (if path is available)
   oauth2Client.on('tokens', (newTokens) => {
-    console.error('Tokens refreshed, saving to file...');
+    console.error('Tokens refreshed.');
     const updatedTokens = {
       ...tokens,
       ...newTokens,
       expiry_date: newTokens.expiry_date || Date.now() + (newTokens.expires_in || 3600) * 1000
     };
-    fs.writeFileSync(tokensPath, JSON.stringify(updatedTokens, null, 2));
-    console.error('Tokens saved successfully.');
+    // Update in-memory tokens
+    Object.assign(tokens, updatedTokens);
+    
+    // Only save to file if we have a file path
+    if (tokensPath) {
+      fs.writeFileSync(tokensPath, JSON.stringify(updatedTokens, null, 2));
+      console.error('Tokens saved to file successfully.');
+    } else {
+      console.error('Tokens updated in memory (no file path available for persistence).');
+    }
   });
 
   analyticsDataClient = new BetaAnalyticsDataClient({
